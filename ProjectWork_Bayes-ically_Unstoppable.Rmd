@@ -1,0 +1,969 @@
+---
+title: "Bayes-ically_Unstoppable"
+output: html_document
+date: "2025-03-30"
+header-includes:
+---
+
+<style>
+  body {
+    background-color: #fefaff;  
+  }
+  pre {
+    background-color: #fcebff; 
+    padding: 10px;
+    border-radius: 5px;
+  }
+  code {
+    background-color: transparent;  # Code inside the code box (if any) without background
+    color: #005f8f;  # Code text color (you can adjust this color)
+  }
+</style>
+
+## Introduction
+
+This is a Group Project for the **Data Analysis for Business** class of LUISS University's Management and Computer Science degree. a.y. 2024/2025 - Spring
+
+- 296881 Guia Ludovica Basso 
+- 297061 Alessio Giannotti 
+- 304011 Yasemin Ateş
+
+This project analyzes the `Hitters`dataset to predict salary levels by converting **continuous salaries into categorical groups** and modeling them using **multinomial logistic regression**. The analysis includes data cleaning, exploratory data analysis, feature evaluation, and model assessment to identify the most relevant predictors of salary.
+
+The dataset contains performance and salary information for Major League Baseball (MLB) players from the 1986 and 1987 seasons. Each row represents a player, with variables capturing both seasonal and career statistics.
+    
+## a. The Model: Multinomial Logistic Regression
+
+Multinomial logistic regression is a generalization of binary logistic regression to multi-class problems. While binary logistic regression models the log-odds of one binary outcome (e.g., success/failure), multinomial regression models the log-odds of each outcome category relative to a **baseline** class. This allows us to predict categorical outcomes with more than two levels, such as salary levels (e.g., Low, Medium, High).
+
+To do this, we select one class (say, class \( K \)) to serve as the **baseline**, and model the probabilities of the other \( K - 1 \) classes as follows:
+
+\[
+\Pr(Y = k \mid X = x) = \frac{e^{\beta_{k0} + \beta_{k1}x_1 + \cdots + \beta_{kp}x_p}}{1 + \sum_{l=1}^{K-1} e^{\beta_{l0} + \beta_{l1}x_1 + \cdots + \beta_{lp}x_p}} \quad \text{for } k = 1, \dots, K-1
+\]
+
+And for the baseline class \( K \):
+
+\[
+\Pr(Y = K \mid X = x) = \frac{1}{1 + \sum_{l=1}^{K-1} e^{\beta_{l0} + \beta_{l1}x_1 + \cdots + \beta_{lp}x_p}}
+\]
+
+We can also express the **log-odds** of any class \( k \) relative to the baseline class as:
+
+\[
+\log \left( \frac{\Pr(Y = k \mid X = x)}{\Pr(Y = K \mid X = x)} \right) = \beta_{k0} + \beta_{k1}x_1 + \cdots + \beta_{kp}x_p
+\]
+
+This shows that the log-odds of any class compared to the baseline are linear functions of the predictors. The choice of baseline affects the coefficients but not the predicted class probabilities. Therefore, interpretation of coefficients must be done carefully and in the context of the chosen reference category.
+
+### Explanation of Terms
+
+- \( Y \): the categorical response variable (e.g., salary level)
+- \( K \): the total number of categories/classes (e.g., 3 levels: Low, Medium, High)
+- \( k \): a specific category, with \( k = 1, 2, \dots, K-1 \) (not the baseline)
+- \( X = (x_1, x_2, \dots, x_p) \): vector of predictor variables (e.g., Hits, HomeRuns, Walks, etc.)
+- \( \Pr(Y = k \mid X = x) \): the probability that observation \( x \) belongs to class \( k \)
+- \( \beta_{k0} \): the intercept for class \( k \)
+- \( \beta_{k1}, \dots, \beta_{kp} \): the coefficients for predictors \( x_1, \dots, x_p \) in class \( k \)
+- The denominator ensures that all probabilities sum to 1 across all classes.
+- The log-odds equation expresses how a one-unit change in predictor \( x_j \) affects the odds of being in class \( k \) vs. the baseline.
+
+This formulation is the foundation of the multinomial logistic regression model and allows us to interpret the effect of each feature on the likelihood of class membership.
+
+## b.The Dataset
+
+```{r setup, include=FALSE} 
+
+knitr::opts_chunk$set(echo = TRUE) #globally set echo to TRUE but dont include this chunk
+
+#loaded libraries in the background
+library(caret) #--> provides functions for model training, resampling, and validation
+library(readr) #--> allows to read CSV files efficiently
+library(tidyverse) #--> packages for data science
+library(nnet) #--> provides functions for Multinomial logistic regression
+library(ggplot2) #--> used for data visualization and plotting
+library(dplyr) #--> provides functions for data manipulation and transformation
+library(reshape2) #--> helps reshape data frames for easier analysis
+library(gridExtra) #--> allows arranging multiple ggplots in a grid layout
+library(mclust) #--> performs Gaussian Mixture Modeling and model-based clustering
+library(boot) #--> supports bootstrap resampling and cross-validation utilities
+library(FSelectorRcpp) #--> calculates feature importance scores using information-theoretic methods (no Java required)
+library(MASS) #--> provides functions for statistical methods and stepwise model selection (e.g., stepAIC)
+library(leaps) #--> provides tools for subset selection in linear models (e.g., forward, backward, and exhaustive search)
+library(glmnet)#--> from the textbook and labs for regularization
+```
+
+In this section we proceed with our analysis by importing the `"Hitters.csv"` dataset and performing any necessary preprocessing.
+
+```{r import-data}
+
+#imported the data
+hitters <- read.csv("/Users/yaseminates/Desktop/Hitters.csv")
+
+#convert the dataset to a standard data frame to ensure compatibility with functions 
+# (although r typically reads csv as dataframe automatically)
+hitters  <- as.data.frame(hitters)
+
+#viewed the structure of the dataframe
+str(hitters)
+
+#we can see that most data classes have been assigned correctly except for "League", "Division" and "NewLeague", which are supposed to be factors but are assigned as characters
+
+#manually reassigned above classes
+hitters$League <- as.factor(hitters$League)
+hitters$Division <- as.factor(hitters$Division)
+hitters$NewLeague <- as.factor(hitters$NewLeague)
+```
+
+With the code below we check the dimensions of the data before we alter any values.
+Originally the dataset has 317 rows x 20 columns.
+
+```{r dimensions}
+
+#checked dimensions: rows x columns
+dim(hitters)
+```
+
+We view the first rows of the dataset to better grasp the the structure and familiarize with the values.
+
+```{r head}
+
+#viewed first few rows
+head(hitters)
+```
+
+Checking for duplicates, we see that there are none.
+
+```{r duplicates}
+
+anyDuplicated(hitters) #we can see there are no duplicates
+                       #since the output = 0
+```
+
+Here we check how many NA values are in each column. We can see that only our target has missing values, thus we drop nan values, instead of imputing with mean, in order not to risk introducing bias.
+
+```{r na}
+
+colSums(is.na(hitters))
+```
+
+Now we omit the missing values in the response variables, and check if they have been successfully deleted.
+
+```{r na-omit}
+
+hitters <- na.omit(hitters)
+sum(is.na(hitters)) #if the output =0 there are no missing values
+```
+
+Let's confirm the new dimensions. Now we have 259 rows after deleting the 58 rows where the response variable are missing (columns remain 20 thus far).
+
+```{r dimensions-2}
+
+#confirmed new dimensions
+dim(hitters)
+```
+
+Checking a few key statistics of the dataframe we find that: 
+
+- Career stats such as `CHits`, `CRuns`, etc. have extremely large ranges, which could mean the dataset includes both rookie players and "seasoned" players.
+
+- The `Years` feature (1–24 years) confirms that player experience varies.
+
+- `Errors`, compared to `Hits`, has a lower maximum (32 and 238 respectively). This indicates the players are highly skilled.
+
+- The salary distribution is heavily right-skewed, meaning the majority of players earn a "lower-end" salary.
+  - **Mean = $532.8k**
+  - **Median = $420k**
+
+With the difference caused by rare instances of high salaries with **Maximum** salary being **$2.46M**.
+
+- Features have ranging scales with a vast difference. For example `Years` (1-24) while `CAtBat` (19-14,053). 
+
+```{r summary-data}
+
+summary(hitters)
+```
+
+To not put large emphasis and priority on larger-scaled features over the others, this difference needs taking care of.
+
+We do not normalize of course, in order not to compress and lose the relative distance between features.
+
+Thus we **standardize.**
+
+\[
+Z = \frac{X - \mu}{\sigma}
+\]
+
+Where:
+- $X$ is the original value, 
+- $\mu$ is the mean, and 
+- $\sigma$ is the standard deviation of the feature.
+
+We can now easily interpret the coefficients as we can see how much "Salary" changes with each feature's 1-standard-deviation-change. Otherwise,the coefficients would be disproportionately "important" for features with larger ranges.
+
+After isolating the numerical features and standardizing, we plot the distributions pre and post standardization of two example features (`Years` and `Catbat`).
+
+We see that the original distributions and relative scales of the data have been respected when standardized.
+
+```{r standardize-data}
+
+#excluding categorical features, of course
+hitters_std <- hitters
+numerical_features <- sapply(hitters, is.numeric) 
+
+#standardized...
+hitters_std[numerical_features] <- scale(hitters[numerical_features])
+
+#we used ChatGPT to help create and put the graphs in a grid
+plot_years_original <- ggplot(hitters, aes(x = Years)) +
+  geom_histogram(bins = 20, fill = "skyblue", color = "black", alpha = 0.7) +
+  ggtitle("Original Distribution of Years") +
+  theme_minimal()
+
+plot_years_standardized <- ggplot(hitters_std, aes(x = Years)) +
+  geom_histogram(bins = 20, fill = "lightgreen", color = "black", alpha = 0.7) +
+  ggtitle("Standardized Distribution of Years") +
+  theme_minimal()
+
+plot_catbat_original <- ggplot(hitters, aes(x = CAtBat)) +
+  geom_histogram(bins = 20, fill = "skyblue", color = "black", alpha = 0.7) +
+  ggtitle("Original Distribution of CAtBat") +
+  theme_minimal()
+
+plot_catbat_standardized <- ggplot(hitters_std, aes(x = CAtBat)) +
+  geom_histogram(bins = 20, fill = "lightgreen", color = "black", alpha = 0.7) +
+  ggtitle("Standardized Distribution of CAtBat") +
+  theme_minimal()
+
+grid.arrange(plot_years_original, plot_years_standardized,
+             plot_catbat_original, plot_catbat_standardized,
+             ncol = 2)
+```
+
+We check the distribution of our target variable `Salary` to determine how to categorize it. We include the mean and median statistics in the plot as well.
+
+It can be seen that the distribution is heavily right skewed, meaning having lower income is much more common than a higher one. However, do not be fooled by the word "Low" here. To further comment on this we must remember that the "Hitters.csv" dataset is based on the "salaries of Major league baseball players for the years 1986–87" (Kaggle). 
+
+The average annual salary (thousands) in the USA in 1987 was **12.28 per capita** with median family income being **30.85** (US Census). Compared to the **minimum of 67.5** for an MLB player, even the so-called "Low" salaries categorized below are only **relatively low**. They are incredibly high compared to the overall national average.
+
+```{r see-salary}
+
+#check distribution of salary to make informed decisions concerning amount of categories and cut-offs
+
+#mean and median
+mean_salary <- mean(hitters$Salary)
+median_salary <- median(hitters$Salary)
+
+#we used ChatGPT to ensure clean and correct graphing of the data
+#dataframe to add legend entries
+line_df <- data.frame(
+  label = c("Mean", "Median"),
+  value = c(mean_salary, median_salary)
+)
+
+#visualize Salary Distribution with legend lines
+salary_plot <- ggplot(hitters, aes(x = Salary)) +
+  geom_histogram(bins = 60, fill = "skyblue", color = "black", alpha = 0.7) +
+  geom_vline(data = line_df, aes(xintercept = value, linetype = label, color = label), linewidth = 1) +
+  scale_color_manual(values = c("Mean" = "red", "Median" = "blue")) +
+  scale_linetype_manual(values = c("Mean" = "dashed", "Median" = "dotted")) +
+  labs(
+    title = "Salary Distribution with Mean and Median",
+    x = "Salary (in $1000s)",
+    y = "Count",
+    s = "Statistic",
+    linetype = "Statistic"
+  ) +
+  theme_minimal()
+
+print(salary_plot)
+
+summary(hitters$Salary)
+
+#we see that it's heavily right skewed, having lower incomes as much more common than higher ones
+```
+
+## c. Creating Categories
+
+To apply a multinomial logistic regression model, we need a **categorical response variable**. However, the original `Salary` variable is continuous. Instead of manually creating arbitrary bins (e.g., by tertiles), we used a **data-driven approach** based on clustering.
+
+Our initial approach was using **K-Means clustering**, as it was not a foreign concept to us. Although the clusters seemed visually appealing and intuitively correct, the cluster with the "Medium" value assigned, was too often **getting wrongly flagged as "Low"** in the multinomial model. This led to an overall decrease in model performance. 
+This likely happened because K-Means assumes all clusters are round and evenly sized, which doesn’t work well with our heavily right-skewed `Salary` data. We decided to explore different approaches to clustering. For methods beyond our own experience, we used ChatGPT to brainstorm.
+
+This led to us applying a **Gaussian Mixture Model (GMM)** to the standardized salary data using the `mclust` package. GMM assumes the data is generated from a mixture of several Gaussian distributions and assigns each observation to the most likely cluster.
+
+This approach helped us handle different shapes and spreads of data which better suits the target variable distribution. We selected **4 clusters** to be grouped, labeled as:
+
+- `Low_Salary`
+- `Medium_Salary`
+- `High_Salary`
+- `Very_High_Salary`
+
+These categories were then assigned to both the original and standardized datasets as a new factor variable: `SalaryLevel_GMM`. 
+
+We also visualized the salary distribution with the GMM clusters overlaid, along with vertical reference lines for the **mean** and **median** salary. This visualization helps confirm that the GMM clusters align well with meaningful variations in salary, and supports their use as a categorical response variable in our classification model.
+
+```{r gmm-cluster}
+
+#fiting a Gaussian Mixture Model (GMM) 
+set.seed(18062003) 
+#seed selected from the closest birthday to the specified one
+#Guia Ludovica Basso - 18-06-2003
+gmm_model <- Mclust(hitters_std$Salary)
+
+#printed the GMM summary
+summary(gmm_model)
+
+#assigned GMM cluster labels to original (hitters) and standardized data (hitters_std)
+hitters$SalaryLevel_GMM <- factor(
+  gmm_model$classification,
+  levels = 1:4,
+  labels = c("Low_Salary", "Medium_Salary", "High_Salary", "Very_High_Salary")
+)
+hitters_std$SalaryLevel_GMM <- factor(
+  gmm_model$classification,
+  levels = 1:4,
+  labels = c("Low_Salary", "Medium_Salary", "High_Salary", "Very_High_Salary")
+)
+
+#visualized salary distribution colored by GMM clusters
+#we used clear and blunt cutoffs to demonstrate the clusters 
+
+#through trial-error we chose 53 as the number of bins with the best aesthetics
+ggplot(hitters, aes(x = Salary, fill = SalaryLevel_GMM)) +
+  geom_histogram(bins = 53, color = "black", alpha = 0.7) +
+  geom_vline(data = line_df, aes(xintercept = value, linetype = label, color = label), linewidth = 1) +
+  scale_fill_manual(values = c("skyblue", "forestgreen", "khaki", "red")) +
+  scale_color_manual(values = c("Mean" = "red", "Median" = "blue")) +
+  scale_linetype_manual(values = c("Mean" = "dashed", "Median" = "dotted")) +
+  labs(
+    title = "Salary Distribution by GMM Clusters with Mean and Median",
+    x = "Salary (in $1000s)",
+    y = "Count",
+    fill = "Cluster",
+    color = "Statistic",
+    linetype = "Statistic"
+  ) +
+  theme_minimal()
+```
+
+## d. Visualization
+
+We performed the **chi-square test** to determine whether there is a statistically significant association between the newly created `SalaryLevels_GMM` and the other Categorical variables.
+
+We notice that `Division` and `SalaryLevel_GMM` are significantly associated since p = 0.0086 < 0.05, , meaning that the distribution of salary categories *differs across divisions*.
+
+That is not the case for League and NewLeague where p values are high, for these two instances we fail to reject the null hypothesis, thus salary level appears to be *independent* of league affiliation in this dataset.
+
+
+```{r chi-square}
+
+categorical_vars <- c("League", "Division", "NewLeague")
+
+chi_results <- lapply(categorical_vars, function(var) {
+  test <- chisq.test(table(hitters_std[[var]], hitters_std$SalaryLevel_GMM))
+  data.frame(
+    Variable = var,
+    P_Value = test$p.value,
+    Significant = ifelse(test$p.value < 0.05, "Yes", "No")
+  )
+})
+
+chi_df <- do.call(rbind, chi_results)
+print(chi_df)
+```
+
+We visualize the relationship between `SalaryLevel_GMM` and `Division` with a proportional stacked bar plot.
+
+In the graph below it is extremely noticeable that the salary distribution is clearly not the same between East and West divisions, thus reinforcing the results from the Chi-Square test.
+
+While *Medium* and *High* salaries have similar proportions across the two divisions (although *High* salaries are 5% more occurrences in the West division), the East divisions appears to have relatively less *Low* salaries and more *Very High* salaries.
+It is hard to say by the graphs alone, but the results may be due to the East wing having more valuable players, while the West wing might have younger/unexperienced players, less investment, or lower performance metrics.
+
+```{r bar-plot-percentages}
+
+#proportions for each "SalaryLevel_GMM" within each "Division"
+div_data <- hitters_std %>%
+  group_by(Division, SalaryLevel_GMM) %>%
+  summarise(count = n(), .groups = "drop") %>%  #suppreses the warning
+  group_by(Division) %>%
+  mutate(
+    prop = count / sum(count),
+    label = scales::percent(prop, accuracy = 1)
+  )
+
+#We used ChatGPT to crate a cleaner graph
+ggplot(div_data, aes(x = Division, y = prop, fill = SalaryLevel_GMM)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = label), position = position_stack(vjust = 0.5), size = 4, color = "black") +
+  scale_y_continuous(labels = scales::percent) +
+  labs(
+    title = "Proportion of Salary Levels by Division (with Percentages)",
+    x = "Division",
+    y = "Proportion",
+    fill = "Salary Level"
+  ) +
+  theme_minimal()
+```
+
+We used **ANOVA** to identify numeric features that differ significantly across salary levels because it supports comparisons across multiple groups, unlike a **t-test** which is limited to two. A stricter significance level of `0.01` was chosen to reduce false positives and focus only on the most confidently predictive variables.
+
+We can see that, despite the more rigid significance level, 14 out of 16 numeric features showed statistically significant.
+
+```{r t-tests}
+
+numeric_features <- names(hitters_std)[sapply(hitters_std, is.numeric)]
+numeric_features <- setdiff(numeric_features, c("Salary"))
+
+anova_results <- data.frame(Variable = character(), P_Value = numeric())
+
+#after researching Stack Overflow and ChatGPT, we decided that ANOVA
+#is more appropriate than a t-test for comparing numeric variables
+#across multiple salary levels, since t-tests are limited to two-groups  
+#ANOVA allowed us to test for differences in means across all four categories 
+
+#ANOVA to collect p-values
+for (var in numeric_features) {
+  formula <- as.formula(paste(var, "~ SalaryLevel_GMM"))
+  model <- aov(formula, data = hitters_std)
+  p_val <- summary(model)[[1]][["Pr(>F)"]][1]
+  anova_results <- rbind(anova_results, data.frame(Variable = var, P_Value = p_val))
+}
+
+#our threshold
+significance_level <- 0.01
+
+significant_vars <- anova_results %>%
+  filter(P_Value < significance_level) %>%
+  arrange(P_Value)
+num_significant <- nrow(significant_vars)
+num_total <- length(numeric_features)
+
+cat("Number of significant numeric features (p <", significance_level, "):", num_significant, "out of", num_total, "\n\n")
+cat("Significant features (ordered by significance):\n")
+for (i in 1:nrow(significant_vars)) {
+  cat(paste0(i, ". ", significant_vars$Variable[i], " (p = ", signif(significant_vars$P_Value[i], 4), ")\n"))
+}
+```
+This heatmap displays the mean  values of numeric features grouped by salary level (`SalaryLevel_GMM`). Each tile’s color intensity reflects how high the average is — darker blue = higher mean value.
+
+Features that darken progressively from low to high salary levels (e.g., `CHits`, `CRuns`, `CAtBat`, `CRBI`) are likely the most informative, as they show clear, consistent increases across salary groups. This visual pattern aligns closely with the ANOVA results, reinforcing the predictive strength of these features in distinguishing salary levels
+
+```{r means}
+
+group_means <- hitters_std %>%
+  dplyr::select(-Salary) %>% #removed "Salary" to not over-saturate the comparison
+  group_by(SalaryLevel_GMM) %>%
+  summarise(across(where(is.numeric), \(x) mean(x, na.rm = TRUE)))
+
+group_means_melted <- melt(group_means, id.vars = "SalaryLevel_GMM")
+
+ggplot(group_means_melted, aes(x = variable, y = SalaryLevel_GMM, fill = value)) +
+  geom_tile(color = "white") +
+  scale_fill_gradient(low = "white", high = "steelblue") +
+  labs(title = "Mean of Numeric Features by Salary Level",
+       x = "Feature", y = "Salary Level") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+Boxplots of the top five most significant numeric features (`CHits`, `CRuns`, `CAtBat`, `CRBI` and `Years`) show clear and consistent upward trends across salary levels. Players in higher salary groups tend to have more career hits, runs, at-bats, RBIs, and years of experience. 
+
+This **supports the ANOVA results** and highlights these features as strong predictors of salary classification.
+
+```{r top-5}
+
+#top-5 significant features
+top5_features <- c("CHits", "CRuns", "CAtBat", "CRBI", "Years")
+
+#boxplots
+for (var in top5_features) {
+  p <- ggplot(hitters_std, aes(x = SalaryLevel_GMM, y = .data[[var]], fill = SalaryLevel_GMM)) +
+    geom_boxplot(alpha = 0.7) +
+    labs(
+      title = paste("Distribution of", var, "by Salary Level"),
+      x = "Salary Level",
+      y = var
+    ) +
+    theme_minimal()
+  print(p)
+}
+```
+
+We decided to also compute **Mutual Information Scores** to measure the dependency between each numeric feature and salary level. Unlike ANOVA, MI captures both linear and non-linear relationships helping us supplement traditional metrics. 
+
+The plot shows that variables such as `CATBat`, `CHits`, `CRBI`, `CRuns`, and `CWalks` provide the most information about salary classification. Of course it is important to note that these strong correlations are also caused by the nature of the data collected. Intuitively, `CHits` which is the number of hits in a player's career, will increase in a positive relation to `CATBat` which is the the times the player is at bat. The same goes for `CRuns`, `CRBI` and `CHits` since they are the result of the previously mentioned feature. This can also be seen in the **Correlation Heatmap**
+
+In short, it should come as no surprise that these features are strongly correlated as they are "reliant" on one another. Later, we will use these strong correlations to create a custom multinomial model where only said predictors take part.
+
+```{r mi-scores}
+
+#target variable
+mi_data <- hitters_std[, c("SalaryLevel_GMM", numeric_features)]
+
+#computed mutual information
+mi_scores <- information_gain(SalaryLevel_GMM ~ ., data = mi_data)
+
+#descending order in graph
+mi_df <- mi_scores %>%
+  arrange(desc(importance))
+
+ggplot(mi_df, aes(x = reorder(attributes, importance), y = importance)) +
+  geom_bar(stat = "identity", fill = "darkorange") +
+  coord_flip() +
+  labs(
+    title = "Mutual Information Scores ",
+    x = "Variable",
+    y = "Mutual Information"
+  ) +
+  theme_minimal()
+
+numeric_vars <- hitters_std %>%
+  dplyr::select(where(is.numeric)) %>%
+  dplyr::select(-Salary) 
+
+cor_matrix <- cor(hitters %>% dplyr::select(where(is.numeric)))
+melted <- melt(cor_matrix)
+
+ggplot(melted, aes(x = Var1, y = Var2, fill = value)) +
+  geom_tile(color = "white") +
+  scale_fill_gradient2(low = "forestgreen", high = "orange", mid = "lightyellow", midpoint = 0) +
+  labs(title = "Correlation Heatmap of Numeric Variables") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+### Further Visualizations
+
+As mentioned above, some features have relationships with each other as they are the "result" or "alternative" of the other. Like how a player at bat can hit, or score a home run.
+
+We use this information to create a "score" for the players and see if their performance score is also directly correlated with their salary level. From previous inference, it most likely will be. As plotted below, it indeed is. 
+
+For the creation of the score, we treated these "positive outcomes" which are `Hits` and `HmRun` (included in `Hits`) and included offensive performances while at bat like: `Walks`, `Runs` and `RBI`. We weigh them equally and do not assign importance for simplicity. We normalize the scores by "times at bat". As mentioned above and expected from the MI Scores, they are directly increasing with `SalaryLevel_GMM`.
+
+```{r more-and-more-visuals}
+
+#dummy dataset to not alter the original
+hitters_vis <- hitters %>%
+  dplyr::select(-Salary) %>%  #no Salary data used, only SalaryLevel
+  mutate(
+    BatAvg = Hits / AtBat, 
+    CareerBatAvg = CHits / CAtBat,
+    #originally we used this but decided to create a custom score
+    #we do not use "HmRun" in the nominator since it is included in Hits
+    #this is apparently how Hit is defined in baseball
+    SuccessScore = (Hits + Walks + RBI + Runs) / AtBat,
+    SuccessScore_C = (CHits + CWalks + CRBI + CRuns) / CAtBat,
+  )
+
+hitters_vis <- hitters_vis %>% filter(Years > 0) #in case of division by zero
+
+#plot grids were created with the help of ChatGPT
+ggplot(hitters_vis, aes(x = SalaryLevel_GMM, y = SuccessScore)) + 
+  geom_boxplot(fill = "lightblue") + 
+  labs(title = "1987 Success Score", x = "Salary Category", y = "Success Score")
+
+ggplot(hitters_vis, aes(x = SalaryLevel_GMM, y = SuccessScore_C)) + 
+  geom_boxplot(fill = "orange") + 
+  labs(title = "Over-Career Success Score", x = "Salary Category", y = "Success Score (Career)")
+```
+
+Our model saw a notable increase in prediction accuracy when switching from a 70/30 split to 80/20. Since we have **very little data** we decided **80/20** is justified as the better choice. 
+
+We split the data by first creating a partition and then removing the target variable `Salary` from the train (and test) set. This is to make sure there are **no data leaks** which might lead to an inflated accuracy rate. 
+
+Another method to note is that we use `createDataPartition()` to create a **stratified** sample instead of `sample()` which randomizes an **unstratified** and completely random split. We tried both and saw a better performance with the former one as the latter does not account for the uneven distribution of the target variable. This is the reason the section below will differ from the lab exercises which use the latter.
+
+```{r splits}
+
+#making sure SalaryLevel_GMM is a factor
+hitters_std$SalaryLevel_GMM <- factor(hitters_std$SalaryLevel_GMM)
+
+set.seed(18062003) #same as before
+train_index <- createDataPartition(hitters_std$SalaryLevel, p = 0.8, list = FALSE) #80/20
+train_split <- hitters_std[train_index, ]
+test_split <- hitters_std[-train_index, ]
+
+#remove "Salary" from predictors, so we DO NOT train on Salary
+train_data <- dplyr::select(train_split, -Salary)
+test_data <- dplyr::select(test_split, -Salary)
+```
+
+We first look at the simple multinomial model from the `nnet` package as seen in the lab sessions. We apply the model as is and do not indulge in any feature engineering. This is to compare its performance with a proposed "better" model later on. 
+
+```{r nnet-multinom} 
+
+#nnet multinomial logistic regression (from lab sessions)
+multinom_fit <- multinom(
+  formula = SalaryLevel_GMM ~ .,
+  data = train_data,
+  trace = FALSE  #supress model output
+)
+```
+
+## f. Evaluation
+
+We continue with **Cross-Validating** the model.
+
+In order to determine our assigned CV model we use the calculation from the project description:
+
+Birthdays of Team Members:
+
+- Guia Ludovica Basso 18-06-2003
+- Alessio Giannotti 09-04-2003
+- Yasemin Ateş 09-03-2004
+
+```{r assigned-cv} 
+
+set.seed(18062003) #Guia's birthday
+cv_methods = c("1. Vanilla validation set", "2. LOO-CV", "3. K-fold CV (with K = 5)", "4. K-fold CV (with K = 10)") 
+sample(cv_methods, 1)
+```
+
+Our assigned model is the `K-fold CV (with K = 10)`. Since our group consists of 3 students, we add the `Leave One Out Cross Validation (LOO-CV)` to this.
+
+We inspected the code provided in the **lab sessions** for this. The comments in quotes (") are directly from the sessions. We later encountered the `train()` function from the `caret` package and proceeded with it rather than `cv.glm()` from the lab sessions (`boot` package). Since we are using a multinomial model, the former allowed **more flexibility and efficiency** as it automatically calculates the performance metrics. The former is a better fit for a simpler model.
+
+For the **10-Fold-CV** method, our "simple" multinomial model gets a 61% accuracy estimate.
+
+```{r 10fold-cv} 
+
+set.seed(18062003) #Guia's birthday
+
+#=============================================
+# "10-Fold Cross-Validation"
+#=============================================
+
+cv_kfold <- train(
+  SalaryLevel_GMM ~ .,  
+  data = train_data,    
+  method = "nnet",      
+  trControl = trainControl(method = "cv", number = 10), #10-fold CV
+  trace = FALSE  #suppress output  
+)
+
+# "Display the results"
+cat("===== 10-FOLD CROSS-VALIDATION =====\n")
+cat("Accuracy:", round(cv_kfold$results$Accuracy[1], 3), "\n")
+cat("Kappa:   ", round(cv_kfold$results$Kappa[1], 3), "\n\n")
+```
+
+Again, we inspect the lab sessions. We proceed with the `caret` package's `train` as previously, for the **Leave-One-Out** calculations. We get a 62% accuracy estimate for the "simple" multinomial model.
+
+```{r loo-cv} 
+
+set.seed(18062003) #Guia's birthday
+
+#=============================================
+# "Leave-One-Out Cross-Validation (LOOCV)"
+#=============================================
+
+loocv_model <- train(
+  SalaryLevel_GMM ~ ., 
+  data = train_data,
+  method = "nnet", 
+  trControl = trainControl(
+    method = "LOOCV",  
+    verboseIter = FALSE #supresses output
+  ),
+  tuneLength = 1,    
+  trace = FALSE #supresses output      
+)
+
+# "Display the results"
+cat("===== LOOCV Results =====\n")
+cat("Accuracy: ", round(loocv_model$results$Accuracy, 3), "\n")
+cat("Error: ", round(1 - loocv_model$results$Accuracy, 3), "\n")
+
+```
+
+We move on to the predictions on the `test_data` to determine the test error. The code below is the continuation of the `multinom_fit` model above, from the lab sessions. We output a **confusion matrix** to identify potential unusual patterns. We did encounter some after using K-Means however, for this model (GMM) there seems to be no reason to deem predictions "suspisciously distributed".
+
+Our "basic" multinomial model achieves a 66% accuracy on the test data. It seems to be performing better on the `Medium_Salary` and `High_Salary` classes with 78% and 74% accuracy respectively.
+
+```{r predictions} 
+
+set.seed(18062003) #Guia's birthday
+
+#predictions of salary levels
+predictions <- predict(multinom_fit, newdata = test_data)
+confusionMatrix(predictions, test_data$SalaryLevel_GMM)
+```
+
+## g. Further Steps
+
+### 1. Custom Predictors from MI Scores
+
+As the Project Guidelines suggest: "*Your goal now is to identify a better model (with lowest test error) for predicting the individual salary level*". 
+
+After inspecting the **Mutual Information Scores** and the **Correlation Heatmap** above, we used a model with only the top-3 "Strongest" predictors. We were able to achieve an **improved 74% accuracy** compared to the **66%** before.
+
+```{r custom-score}
+
+set.seed(18062003) #Guia's birthday
+
+multinom_custom <- multinom(
+  formula = SalaryLevel_GMM ~ +CAtBat +CHits +CRBI,
+  data = train_data,
+  trace = FALSE  # suppress model output
+)
+
+predictions_custom <- predict(
+  multinom_custom, 
+  newdata = test_data
+  )
+
+accuracy_custom <- mean(
+  predictions_custom == test_data$SalaryLevel_GMM
+  )
+print(paste("Accuracy: ", accuracy_custom))
+
+conf_matrix_custom <- table(
+  Predicted = predictions_custom, 
+  Actual = test_data$SalaryLevel_GMM
+  )
+print(conf_matrix_custom)
+```
+
+### 2. Tuned Model (Decay Regularization or L2)
+
+A notable approach in our search for a better model, was to fine-tune the multinomial model. This regularization approach is specific to the `nnet` library's multinomial model.We tried a range of decay values, penalizing large weights, to see if this would have an effect on the test error. 
+
+Below is the confusion matrix of the so-called "Best Model" chosen after all the decay values' accuracies have been compared. The one with the highest accuracy seems to be `decay = 0.1` with 76% accuracy. This is a **10% jump in prediction accuracy** from our previous model, which is a great improvement!!!  
+
+For each of the classes, the accuracies have went up from:
+
+- **0.65**  to  **0.71** (Low_Salary)
+- **0.78**  to  **0.80** (Medium_Salary)
+- **0.74**  to  **0.82** (High_Salary)
+- **0.68**  to  **0.70** (VeryHigh_Salary)
+
+Notes from the team:
+
+- Guia: 🥂
+- Alessio: 🥳
+- Yasemin: 👾
+
+```{r model-fit}
+
+set.seed(18062003) #Guia's birthday
+
+#we found that the preferd range of decay is 0-1
+decay_values <- c(0.001, 0.01, 0.1, 0.2, 0.5, 1)
+
+#placeholder variables
+best_accuracy <- 0
+best_decay <- NULL
+best_model <- NULL
+
+#try all decay values with the multinomial model. To create "method" and loop over this we had help from ChatGPT
+for (decay in decay_values) {
+  
+  model_tuned <- multinom(SalaryLevel_GMM ~ ., data = train_data, decay = decay, maxit = 200, trace = FALSE)
+  
+  #predict
+  predictions_tuned <- predict(model_tuned, test_data)
+  
+  #calculate the accuracy
+  accuracy_tuned <- mean(predictions_tuned == test_data$SalaryLevel_GMM)
+  
+  #update the best model if need be
+  if (accuracy_tuned > best_accuracy) {
+    best_accuracy <- accuracy_tuned
+    best_decay <- decay
+    best_model <- model_tuned
+  }
+}
+
+cat("Best decay: ", best_decay, "\n")
+cat("Best model accuracy: ", best_accuracy, "\n")
+
+#confusion matrix for best model
+best_predictions <- predict(best_model, test_data)
+confusionMatrix(best_predictions, test_data$SalaryLevel_GMM)
+```
+
+### 3 .Stepwise Model
+
+For model selection, the lab session material was not the best fit for our case , since the procedure was manual. We have too many predictors to try and fit one-by-one. We explored the `step()` function. 
+
+The accuracies observed were:
+
+- **68%** (Both)
+- **68%** (Backward)
+- **74%** (Forward)
+
+Note that we use the `model_tuned` with original accuracy 76%. Stepwise selection **underperformed** compared to the improved-decay model (and the "full"basic" multinomial model) due to it removing variables with an individualistic approach to the features, without considering their **combined predictive value.** Decay, retains **all predictors** and shrinkis less-important coefficients. 
+
+Among stepwise methods, forward selection **outperformed** backward or bidirecitonal approaches. This is most likely due to its nature: Starting with no predictors and adding variables one at a time, choosing those that improve the model most at each step. 
+
+```{r stepwise-model}
+
+set.seed(18062003) #Guia's birthday
+
+# Perform stepwise selection based on AIC
+stepwise_model <- stepAIC(model_tuned, direction = "forward", trace = FALSE)
+
+# Summary of the final stepwise model
+summary(stepwise_model)
+
+# After stepwise feature selection, use the model to predict on test data
+predictions <- predict(stepwise_model, newdata = test_data)
+
+#accuracy 
+confusion_matrix <- table(Predicted = predictions, Actual = test_data$SalaryLevel_GMM)
+accuracy <- sum(diag(confusion_matrix)) / sum(confusion_matrix)
+print(paste("Model Accuracy: ", round(accuracy * 100, 2), "%"))
+
+```
+
+### 4. Regularization with glmnet
+
+We used the `glmnet` library from the lab sessions and textbook: *"An Introduction to Statistical Learning with Applications in R, 2nd Ed."*, to apply L1 and L2 regularization. Note that this slightly differs from the `nnet` approach, resulting in different accuracies.
+
+We observe **78%** and **74%** accuracy for the L2 and L1 models respectively. The Ridge or L2 Regularization model is the **highest accuracy yet**, with an added **2% improvement** from the `nnet` package's **76%** as follows:
+
+- **0.71**  to  **0.85** (Low_Salary)
+- **0.80**  to  **0.81** (Medium_Salary)
+- **0.82**  to  **0.80** (High_Salary) 
+- **0.70**  to  **0.70** (VeryHigh_Salary)
+
+More notes from the team:
+
+- Guia: 🎉
+- Alessio: 🫡
+- Yasemin: 🎺
+
+This approach seems to have the most impact in `Low_Salary` predictions. This improvement is likely caused by the differences in the packages' L2 (Ridge) applications but could also have been affected by our use of "only numerical values" in the case of the `glmnet` package below.
+
+```{r regularization}
+
+set.seed(18062003) #Guia's birthday
+
+train_data_new <- dplyr::select(train_split, -Salary, -SalaryLevel_GMM)
+test_data_new <- dplyr::select(test_split, -Salary, -SalaryLevel_GMM)
+
+train_data_numeric <- train_data_new %>% select_if(is.numeric)
+test_data_numeric <- test_data_new %>% select_if(is.numeric)
+#we only use the numeric data for simplicity
+#they are the majority in number and "importance"
+
+levels_train <- levels(train_split$SalaryLevel_GMM) 
+train_split$SalaryLevel_GMM <- factor(train_split$SalaryLevel_GMM, levels = levels_train)
+
+#we prepare the train and test splits for the functions
+test_split$SalaryLevel_GMM <- factor(test_split$SalaryLevel_GMM, levels = levels_train)
+X_train <- train_data_numeric
+y_train <- train_split$SalaryLevel_GMM  # Target variable for training
+X_test <- test_data_numeric
+y_test <- test_split$SalaryLevel_GMM  # Target variable for testing
+X_train_matrix <- as.matrix(X_train)
+X_test_matrix <- as.matrix(X_test)
+
+#Ridge L2
+ridge_model <- glmnet(X_train_matrix, y_train, family = "multinomial", alpha = 0)
+ridge_cv <- cv.glmnet(X_train_matrix, y_train, family = "multinomial", alpha = 0)
+
+#Lasso L1
+lasso_model <- glmnet(X_train_matrix, y_train, family = "multinomial", alpha = 1)
+lasso_cv <- cv.glmnet(X_train_matrix, y_train, family = "multinomial", alpha = 1)
+
+#predictions as factors
+ridge_pred <- predict(ridge_cv, newx = X_test_matrix, s = "lambda.min", type = "class")
+ridge_pred <- factor(ridge_pred, levels = levels_train)
+lasso_pred <- predict(lasso_cv, newx = X_test_matrix, s = "lambda.min", type = "class")
+lasso_pred <- factor(lasso_pred, levels = levels_train)
+confusion_ridge <- confusionMatrix(ridge_pred, factor(y_test))
+confusion_lasso <- confusionMatrix(lasso_pred, factor(y_test))
+
+print(confusion_ridge)
+print(confusion_lasso)
+```
+
+### 5. Subset Selection for a Custom-Predictor-Set Model
+
+**For simplicity we do not include this part of the analysis in the .html file. The code is available on the .rmd file.**
+
+We decided to also consult our textbook further and found section 6.5 titled: *Lab: Linear Models and Regularization Methods*. From the section:
+
+*"The* `regsubsets()` *function (part of the* `leaps` *library) performs best sub- set selection by identifying the best model that contains a given number of predictors, where best is quantified using RSS."*
+
+We ran the `regsubsets()` function over all 19 predictors using this approach and found that:
+
+- Max adjusted R^2 value is a **subset with 14 predictors**
+- Min BIC value is a **subset with 3 predictors**
+
+We then ran **forward and backward selection** with `regsubsets()` in search of a better result however, we got the same subset sizes above, with differing predictors. 
+
+When we applied these subsets to our "basic" multinomial model, the accuracy **did not improve notably**. So we decided to take note of these findings while not including them in the final report.
+
+```{r subset-sel-book, echo = FALSE, include=FALSE}
+
+regfit.full <- regsubsets(SalaryLevel_GMM ~ . -Salary, data = hitters, nvmax = 19) 
+#not the standardized data, as the book also uses the original one
+
+reg.summary <- summary(regfit.full)
+summary(regfit.full)
+```
+
+```{r subset-sel-contd, echo = FALSE, include=FALSE}
+
+par(mfrow = c(2, 2))
+plot(reg.summary$rss, xlab = "Number of Variables", ylab = "RSS", type = "l")
+
+max_adjr2 <- which.max(reg.summary$adjr2)
+plot(reg.summary$adjr2, xlab = "Number of Variables", ylab = "Adjusted RSq", type = "l")
+points(max_adjr2, reg.summary$adjr2[max_adjr2], col = "red", cex = 2, pch = 20)
+
+min_cp <- which.min(reg.summary$cp)
+plot(reg.summary$cp, xlab = "Number of Variables", ylab = "Cp", type = "l")
+points(min_cp, reg.summary$cp[min_cp], col = "red", cex = 2, pch = 20)
+
+min_bic <- which.min(reg.summary$bic)
+plot(reg.summary$bic, xlab = "Number of Variables", ylab = "BIC", type = "l")
+points(min_bic, reg.summary$bic[min_bic], col = "red", cex = 2, pch = 20)
+
+max_adjr2
+min_cp
+min_bic
+names(coef(regfit.full, 3))
+names(coef(regfit.full, 14))
+```
+
+```{r subset-sel-contd2, echo = FALSE, include=FALSE}
+
+regfit.fwd <- regsubsets(SalaryLevel_GMM ~ . -Salary, data = hitters, nvmax = 19, method = "forward")
+regfwd.summary <- summary(regfit.fwd)
+summary(regfit.fwd)
+
+regfit.bwd <- regsubsets(SalaryLevel_GMM ~ . -Salary, data = hitters, nvmax = 19, method = "backward")
+regbwd.summary <- summary(regfit.bwd)
+summary(regfit.bwd)
+```
+
+```{r subset-sel-contd3, echo = FALSE, include=FALSE}
+
+which.max(regfwd.summary$adjr2)
+which.min(regfwd.summary$cp)
+which.min(regfwd.summary$bic)
+
+names(coef(regfit.fwd, 14))
+names(coef(regfit.fwd, 13))
+names(coef(regfit.fwd, 3))
+
+which.max(regbwd.summary$adjr2)
+which.min(regbwd.summary$cp)
+which.min(regbwd.summary$bic)
+
+names(coef(regfit.bwd, 14))
+names(coef(regfit.bwd, 10))
+names(coef(regfit.bwd, 3))
+```
+
+## Conclusion
+
+The aim of this analysis was to predict baseball player's salaries as "Low", "Medium", "High" or "Very High" as determined by clustering the collected salary values.
+
+We can conclude that the **more seasoned and experienced** a player is (in relation to the `Years` feature), and the **better they perform** (in relation to the performance metrics like `Hits`, `HmRun`, etc.) the **higher their salary** will be. We further analyzed this ny creating a success score and saw the positive relation proven once again. The league or division of the player seems not to have too large an effect on the salary, especially compared to their performance. 
+
+In further data gathering practices or analysis, **more entries** collected over a **longer period of time** will surely help refine these models.
