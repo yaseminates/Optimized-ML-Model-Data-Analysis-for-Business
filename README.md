@@ -3,7 +3,7 @@
 ## Group Name: Bayes-ically_Unstoppable
 2025-03-30
 ### Introduction
-This is a Group Project for the Data Analysis for Business class of LUISS University’s Management and Computer Science degree. a.y. 2024/2025 - Spring
+This is a Group Project for the Data Analysis for Business class of LUISS University’s Management and Computer Science degree. a.y. 2024/2025 - Spring. The project was awarded a 30/30.
 
 - 296881 Guia Ludovica Basso
 - 297061 Alessio Giannotti
