@@ -9,7 +9,9 @@ This is a Group Project for the Data Analysis for Business class of LUISS Univer
 - 297061 Alessio Giannotti
 - 304011 Yasemin Ateş
 
-This project analyzes the Hittersdataset to predict salary levels by converting continuous salaries into categorical groups and modeling them using multinomial logistic regression. The analysis includes data cleaning, exploratory data analysis, feature evaluation, and model assessment to identify the most relevant predictors of salary.
+View the output here: https://yaseminates.github.io/Optimized-ML-Model-Data-Analysis-for-Business/
+
+This project analyzes the "Hitters" dataset to predict salary levels by converting continuous salaries into categorical groups and modeling them using multinomial logistic regression. The analysis includes data cleaning, exploratory data analysis, feature evaluation, and model assessment to identify the most relevant predictors of salary.
 
 The dataset contains performance and salary information for Major League Baseball (MLB) players from the 1986 and 1987 seasons. Each row represents a player, with variables capturing both seasonal and career statistics.
 
